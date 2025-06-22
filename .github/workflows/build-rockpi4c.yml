@@ -58,14 +58,15 @@ jobs:
         run: |
           # manjaro-arm-tools main config
           sudo mkdir -p /etc/manjaro-arm-tools
-          if [ ! -f /etc/manjaro-arm-tools/manjaro-arm-tools.conf ]; then
-            sudo cp manjaro-arm-tools/etc/manjaro-arm-tools.conf \
-              /etc/manjaro-arm-tools/manjaro-arm-tools.conf
+          CONF_SRC="/usr/share/manjaro-arm-tools/lib/manjaro-arm-tools.conf"
+          if [ -f "$CONF_SRC" ] && [ ! -f /etc/manjaro-arm-tools/manjaro-arm-tools.conf ]; then
+            sudo cp "$CONF_SRC" /etc/manjaro-arm-tools/manjaro-arm-tools.conf
           fi
-          # makepkg.conf (needed by build scripts)
+
+          # makepkg.conf (required by the build scripts)
           if [ ! -f /etc/makepkg.conf ]; then
-            sudo curl -L https://raw.githubusercontent.com/archlinux/svntogit-packages/packages/pacman/trunk/makepkg.conf \
-              -o /etc/makepkg.conf
+            curl -L https://raw.githubusercontent.com/archlinux/svntogit-packages/packages/pacman/trunk/makepkg.conf | \
+              sudo tee /etc/makepkg.conf >/dev/null
           fi
 
       - name: Install build profiles
