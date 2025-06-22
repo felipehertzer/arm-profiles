@@ -1,24 +1,25 @@
-# .github/workflows/build-rockpi4c.yml
 name: Build RockPi4C Images
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 2 * * 1'  # Weekly: Monday 02:00 UTC
+    - cron: '0 2 * * 1'
 
 jobs:
   build-all-editions:
     runs-on: ubuntu-latest
+
     strategy:
       matrix:
-        edition: [minimal, lxqt, kde-plasma, xfce]  # adjust as desired
+        edition: [minimal, lxqt, kde-plasma, xfce]
         branch: [master]
+
     permissions:
-      contents: read
+      contents: write
       actions: write
 
     steps:
-      - name: Checkout source repo
+      - name: Checkout this repository
         uses: actions/checkout@v4
 
       - name: Checkout arm-profiles
@@ -27,73 +28,84 @@ jobs:
           repository: felipehertzer/arm-profiles
           path: arm-profiles
 
-      - name: Install required packages & tools
+      - name: Install host prerequisites
         run: |
           sudo apt update
-          sudo apt install -y software-properties-common
-          sudo add-apt-repository universe
-          sudo apt update
-          sudo apt install -y qemu-user-static binfmt-support git wget debootstrap libarchive-tools python3-pip
+          sudo apt install -y \
+            software-properties-common \
+            qemu-user-static \
+            binfmt-support \
+            pacman \
+            git \
+            wget \
+            debootstrap \
+            libarchive-tools \
+            arch-install-scripts \
+            parted \
+            dosfstools \
+            e2fsprogs \
+            btrfs-progs \
+            squashfs-tools \
+            p7zip-full \
+            pv \
+            python3-pip
+          sudo update-binfmts --enable qemu-aarch64
 
       - name: Install manjaro-arm-tools
         run: |
           git clone https://gitlab.manjaro.org/manjaro-arm/applications/manjaro-arm-tools.git
           cd manjaro-arm-tools
-          sudo cp bin/* /usr/bin/
-          sudo cp lib/* /usr/share/manjaro-arm-tools/lib/
-          sudo chmod +x /usr/bin/buildarmimg
-          # Create needed directories
-          for d in pkg img tmp; do sudo mkdir -p /var/lib/manjaro-arm-tools/$d; done
-          for d in img pkg; do sudo mkdir -p /var/cache/manjaro-arm-tools/$d; done
-          # Enable QEMU for ARM binaries
-          sudo update-binfmts --enable qemu-aarch64
+          sudo install -Dm755 bin/* /usr/bin/
+          sudo install -Dm644 lib/* -t /usr/share/manjaro-arm-tools/lib/
+          sudo mkdir -p /var/lib/manjaro-arm-tools/{pkg,img,tmp}
+          sudo mkdir -p /var/cache/manjaro-arm-tools/{pkg,img}
 
-      - name: Install profiles
+      - name: Install build profiles
         run: |
           sudo mv arm-profiles /usr/share/manjaro-arm-tools/profiles
 
-      - name: Build image for ${{ matrix.edition }}
+      - name: Build image
         env:
           DEVICE: rockpi4c
           EDITION: ${{ matrix.edition }}
           BRANCH: ${{ matrix.branch }}
           VERSION: ${{ github.run_number }}
         run: |
-          sudo buildarmimg -d $DEVICE -e $EDITION -b $BRANCH -v $VERSION
+          sudo buildarmimg -d "${DEVICE}" -e "${EDITION}" -b "${BRANCH}" -v "${VERSION}"
 
-      - name: Locate generated image
-        id: find
+      - name: Locate built image
+        id: locate
         run: |
-          FILE=$(find /var/cache/manjaro-arm-tools/img -type f -name "*rockpi4c-*.img.xz" | head -n1)
-          echo "FILE=$FILE" >> $GITHUB_ENV
+          FILE=$(find /var/cache/manjaro-arm-tools/img -type f -name "*${DEVICE}-*.img.xz" | head -n1)
+          echo "FILE=${FILE}" >> "${GITHUB_ENV}"
 
-      - name: Inspect artifact
-        run: ls -lh "$FILE"
+      - name: List artefact
+        run: ls -lh "${FILE}"
 
-      - name: Create GitHub Release
-        id: release
+      - name: Create release
+        id: create_release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: img-${{ matrix.edition }}-${{ github.run_number }}
-          name: RockPi4C – ${{ matrix.edition }} – build #${{ github.run_number }}
+          name: RockPi4C – ${{ matrix.edition }} – build ${{ github.run_number }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload image asset
+      - name: Upload image
         uses: actions/upload-release-asset@v1
         with:
-          upload_url: ${{ steps.release.outputs.upload_url }}
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: ${{ env.FILE }}
           asset_name: ${{ matrix.edition }}.img.xz
-          asset_content_type: application/x-compressed-tar
+          asset_content_type: application/x-xz
 
-      - name: Generate SHA1 checksum
-        run: sha1sum "$FILE" > "${FILE}.sha1"
+      - name: Generate checksum
+        run: sha1sum "${FILE}" > "${FILE}.sha1"
 
-      - name: Upload SHA1 asset
+      - name: Upload checksum
         uses: actions/upload-release-asset@v1
         with:
-          upload_url: ${{ steps.release.outputs.upload_url }}
-          asset_path: "${{ env.FILE }}.sha1"
-          asset_name: "${{ matrix.edition }}.img.xz.sha1"
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ${{ env.FILE }}.sha1
+          asset_name: ${{ matrix.edition }}.img.xz.sha1
           asset_content_type: text/plain
