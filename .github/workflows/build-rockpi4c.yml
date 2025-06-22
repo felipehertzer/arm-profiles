@@ -30,8 +30,10 @@ jobs:
       - name: Install required packages & tools
         run: |
           sudo apt update
-          sudo apt install -y qemu-user-static binfmt-support git wget debootstrap libarchive-tools pip3
-          pip3 install lxml
+          sudo apt install -y software-properties-common
+          sudo add-apt-repository universe
+          sudo apt update
+          sudo apt install -y qemu-user-static binfmt-support git wget debootstrap libarchive-tools python3-pip
 
       - name: Install manjaro-arm-tools
         run: |
