@@ -41,14 +41,8 @@ jobs:
             debootstrap \
             libarchive-tools \
             arch-install-scripts \
-            parted \
-            dosfstools \
-            e2fsprogs \
-            btrfs-progs \
-            squashfs-tools \
-            p7zip-full \
-            pv \
-            python3-pip
+            parted dosfstools e2fsprogs btrfs-progs squashfs-tools \
+            p7zip-full pv python3-pip
           sudo update-binfmts --enable qemu-aarch64
 
       - name: Install manjaro-arm-tools
@@ -59,6 +53,20 @@ jobs:
           sudo install -Dm644 lib/* -t /usr/share/manjaro-arm-tools/lib/
           sudo mkdir -p /var/lib/manjaro-arm-tools/{pkg,img,tmp}
           sudo mkdir -p /var/cache/manjaro-arm-tools/{pkg,img}
+
+      - name: Create missing configuration files
+        run: |
+          # manjaro-arm-tools main config
+          sudo mkdir -p /etc/manjaro-arm-tools
+          if [ ! -f /etc/manjaro-arm-tools/manjaro-arm-tools.conf ]; then
+            sudo cp manjaro-arm-tools/etc/manjaro-arm-tools.conf \
+              /etc/manjaro-arm-tools/manjaro-arm-tools.conf
+          fi
+          # makepkg.conf (needed by build scripts)
+          if [ ! -f /etc/makepkg.conf ]; then
+            sudo curl -L https://raw.githubusercontent.com/archlinux/svntogit-packages/packages/pacman/trunk/makepkg.conf \
+              -o /etc/makepkg.conf
+          fi
 
       - name: Install build profiles
         run: |
@@ -87,7 +95,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           tag_name: img-${{ matrix.edition }}-${{ github.run_number }}
-          name: RockPi4C – ${{ matrix.edition }} – build ${{ github.run_number }}
+          name: RockPi4C ${{ matrix.edition }} build ${{ github.run_number }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
