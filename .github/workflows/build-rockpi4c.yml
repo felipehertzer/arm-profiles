@@ -65,18 +65,49 @@ jobs:
           parted \
           dosfstools \
           wget \
-          git
+          git \
+          debootstrap \
+          arch-install-scripts \
+          systemd-container \
+          haveged \
+          pwgen \
+          multipath-tools
           
     - name: Install Manjaro ARM Tools
       run: |
-        # Add Manjaro ARM repository
-        sudo wget -O /etc/apt/trusted.gpg.d/manjaro-arm.gpg https://gitlab.manjaro.org/packages/core/manjaro-keyring/-/raw/master/manjaro.gpg
-        echo "deb [arch=amd64] https://repo.manjaro.org/repo/stable \$arch core" | sudo tee /etc/apt/sources.list.d/manjaro-arm.list
-        
-        # Alternative: Install from AUR or build from source
+        # Clone the tools repository
         git clone https://gitlab.manjaro.org/manjaro-arm/applications/manjaro-arm-tools.git
         cd manjaro-arm-tools
-        sudo make install
+        
+        # Check if we have the expected structure
+        ls -la
+        
+        # Try different installation methods
+        if [ -f "Makefile" ]; then
+          echo "Found Makefile, trying make install"
+          sudo make install || echo "Make install failed, trying manual installation"
+        fi
+        
+        # Manual installation as fallback
+        if [ -d "bin" ]; then
+          echo "Installing scripts manually"
+          sudo chmod +x bin/*
+          sudo cp bin/* /usr/local/bin/
+        fi
+        
+        if [ -d "lib" ]; then
+          echo "Installing library files"
+          sudo mkdir -p /usr/local/lib/manjaro-arm-tools
+          sudo cp -r lib/* /usr/local/lib/manjaro-arm-tools/
+        fi
+        
+        # Create necessary directories
+        sudo mkdir -p /usr/share/manjaro-arm-tools
+        
+        # Verify installation
+        which buildarmimg || echo "buildarmimg not found in PATH"
+        ls -la /usr/local/bin/build* || echo "No build scripts found"
+        
         cd ..
         
     - name: Setup build environment
@@ -114,11 +145,32 @@ jobs:
       run: |
         echo "Building image for device: $DEVICE, edition: $EDITION, version: ${{ steps.version.outputs.version }}"
         
-        # Build the image
-        if [ -n "${{ steps.version.outputs.version }}" ]; then
-          sudo buildarmimg -d $DEVICE -e $EDITION -v ${{ steps.version.outputs.version }}
+        # First try direct build
+        if command -v buildarmimg &> /dev/null; then
+          echo "Using buildarmimg directly"
+          if [ -n "${{ steps.version.outputs.version }}" ]; then
+            sudo buildarmimg -d $DEVICE -e $EDITION -v ${{ steps.version.outputs.version }}
+          else
+            sudo buildarmimg -d $DEVICE -e $EDITION
+          fi
         else
-          sudo buildarmimg -d $DEVICE -e $EDITION
+          echo "buildarmimg not found, trying alternative approaches"
+          
+          # Alternative: Use Docker approach
+          echo "Trying Docker-based build"
+          docker run --rm --privileged \
+            -v $(pwd):/workspace \
+            -v /var/cache/manjaro-arm-tools:/var/cache/manjaro-arm-tools \
+            manjarolinux/base:latest \
+            bash -c "
+              pacman -Syu --noconfirm
+              pacman -S --noconfirm manjaro-arm-tools
+              buildarmimg -d $DEVICE -e $EDITION
+            " || {
+              echo "Docker build failed, trying manual build process"
+              # Add manual build process here if needed
+              exit 1
+            }
         fi
         
     - name: Compress image
@@ -214,9 +266,32 @@ jobs:
         
     - name: Install Manjaro ARM Tools
       run: |
+        # Clone the tools repository
         git clone https://gitlab.manjaro.org/manjaro-arm/applications/manjaro-arm-tools.git
         cd manjaro-arm-tools
-        sudo make install
+        
+        # Install dependencies
+        sudo apt-get install -y \
+          arch-install-scripts \
+          binfmt-support \
+          qemu-user-static \
+          systemd-container \
+          haveged \
+          pwgen \
+          multipath-tools \
+          archiso
+        
+        # Make scripts executable and copy to system
+        sudo chmod +x bin/*
+        sudo cp bin/* /usr/local/bin/
+        
+        # Copy lib files
+        sudo mkdir -p /usr/local/lib/manjaro-arm-tools
+        sudo cp -r lib/* /usr/local/lib/manjaro-arm-tools/
+        
+        # Create necessary directories
+        sudo mkdir -p /usr/share/manjaro-arm-tools
+        
         cd ..
         
     - name: Setup build environment
