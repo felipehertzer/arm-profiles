@@ -142,7 +142,7 @@ jobs:
         
         # Create basic configuration files to avoid warnings
         sudo mkdir -p /etc/manjaro-arm-tools
-        sudo tee /etc/manjaro-arm-tools/manjaro-arm-tools.conf > /dev/null << 'EOF'
+        cat << 'EOF' | sudo tee /etc/manjaro-arm-tools/manjaro-arm-tools.conf > /dev/null
 # Manjaro ARM Tools Configuration
 CARCH="aarch64"
 COMPRESSION="xz"
@@ -151,32 +151,11 @@ BUILDDIR="/var/lib/manjaro-arm-tools"
 PKGDIR="/var/cache/manjaro-arm-tools/pkg"
 EOF
         
-        # Create basic makepkg.conf to avoid warnings
-        sudo tee /etc/makepkg.conf > /dev/null << 'EOF'
+        # Create basic makepkg.conf to avoid warnings  
+        cat << 'EOF' | sudo tee /etc/makepkg.conf > /dev/null
 CARCH="aarch64"
 CHOST="aarch64-unknown-linux-gnu"
-CPPFLAGS="-D_FORTIFY_SOURCE=2"
-CFLAGS="-march=armv8-a -O2 -pipe -fstack-protector-strong -fno-plt"
-CXXFLAGS="-march=armv8-a -O2 -pipe -fstack-protector-strong -fno-plt"
-LDFLAGS="-Wl,-O1,--sort-common,--as-needed,-z,relro,-z,now"
 MAKEFLAGS="-j$(nproc)"
-DEBUG_CFLAGS="-g -fvar-tracking-assignments"
-DEBUG_CXXFLAGS="-g -fvar-tracking-assignments"
-BUILDENV=(!distcc color !ccache check !sign)
-OPTIONS=(strip docs !libtool !staticlibs emptydirs zipman purge !debug)
-INTEGRITY_CHECK=(md5)
-STRIP_BINARIES="--strip-all"
-STRIP_SHARED="--strip-unneeded"
-STRIP_STATIC="--strip-debug"
-MAN_DIRS=({usr{,/local}{,/share},opt/*}/{man,info})
-DOC_DIRS=(usr/{,local/}{,share/}{doc,gtk-doc} opt/*/{doc,gtk-doc})
-PURGE_TARGETS=(usr/{,share}/info/dir .packlist *.pod)
-COMPRESSGZ=(gzip -c -f -n)
-COMPRESSBZ2=(bzip2 -c -f)
-COMPRESSXZ=(xz -c -z -)
-COMPRESSLRZ=(lrzip -q)
-COMPRESSLZO=(lzop -q)
-COMPRESSZ=(compress -c -f)
 PKGEXT='.pkg.tar.xz'
 SRCEXT='.src.tar.gz'
 EOF
@@ -408,4 +387,3 @@ EOF
         path: |
           /var/cache/manjaro-arm-tools/img/*.xz
           /var/cache/manjaro-arm-tools/img/*.sha256
-        
