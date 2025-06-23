@@ -71,7 +71,9 @@ jobs:
           systemd-container \
           haveged \
           pwgen \
-          multipath-tools
+          multipath-tools \
+          libarchive-tools \
+          bsdtar
           
     - name: Install Manjaro ARM Tools
       run: |
@@ -138,12 +140,46 @@ jobs:
         ls -la /usr/share/manjaro-arm-tools/profiles/ || echo "No profiles directory"
         ls -la /arm-profiles/ || echo "No /arm-profiles symlink"
         
-        # Check if required files exist
-        if [ -f "/usr/share/manjaro-arm-tools/lib/functions.sh" ]; then
-          echo "✓ functions.sh found"
-        else
-          echo "✗ functions.sh missing"
-        fi
+        # Create basic configuration files to avoid warnings
+        sudo mkdir -p /etc/manjaro-arm-tools
+        sudo tee /etc/manjaro-arm-tools/manjaro-arm-tools.conf > /dev/null << 'EOF'
+# Manjaro ARM Tools Configuration
+CARCH="aarch64"
+COMPRESSION="xz"
+IMGDIR="/var/cache/manjaro-arm-tools/img"
+BUILDDIR="/var/lib/manjaro-arm-tools"
+PKGDIR="/var/cache/manjaro-arm-tools/pkg"
+EOF
+        
+        # Create basic makepkg.conf to avoid warnings
+        sudo tee /etc/makepkg.conf > /dev/null << 'EOF'
+CARCH="aarch64"
+CHOST="aarch64-unknown-linux-gnu"
+CPPFLAGS="-D_FORTIFY_SOURCE=2"
+CFLAGS="-march=armv8-a -O2 -pipe -fstack-protector-strong -fno-plt"
+CXXFLAGS="-march=armv8-a -O2 -pipe -fstack-protector-strong -fno-plt"
+LDFLAGS="-Wl,-O1,--sort-common,--as-needed,-z,relro,-z,now"
+MAKEFLAGS="-j$(nproc)"
+DEBUG_CFLAGS="-g -fvar-tracking-assignments"
+DEBUG_CXXFLAGS="-g -fvar-tracking-assignments"
+BUILDENV=(!distcc color !ccache check !sign)
+OPTIONS=(strip docs !libtool !staticlibs emptydirs zipman purge !debug)
+INTEGRITY_CHECK=(md5)
+STRIP_BINARIES="--strip-all"
+STRIP_SHARED="--strip-unneeded"
+STRIP_STATIC="--strip-debug"
+MAN_DIRS=({usr{,/local}{,/share},opt/*}/{man,info})
+DOC_DIRS=(usr/{,local/}{,share/}{doc,gtk-doc} opt/*/{doc,gtk-doc})
+PURGE_TARGETS=(usr/{,share}/info/dir .packlist *.pod)
+COMPRESSGZ=(gzip -c -f -n)
+COMPRESSBZ2=(bzip2 -c -f)
+COMPRESSXZ=(xz -c -z -)
+COMPRESSLRZ=(lrzip -q)
+COMPRESSLZO=(lzop -q)
+COMPRESSZ=(compress -c -f)
+PKGEXT='.pkg.tar.xz'
+SRCEXT='.src.tar.gz'
+EOF
         
     - name: Set version
       id: version
@@ -215,14 +251,23 @@ jobs:
     - name: Compress image
       run: |
         cd /var/cache/manjaro-arm-tools/img
-        IMAGE_FILE=$(ls -t *.img | head -1)
-        if [ -f "$IMAGE_FILE" ]; then
-          echo "Compressing $IMAGE_FILE"
-          xz -z -T 0 "$IMAGE_FILE"
-          echo "compressed_image=${IMAGE_FILE}.xz" >> $GITHUB_ENV
-          echo "image_path=/var/cache/manjaro-arm-tools/img/${IMAGE_FILE}.xz" >> $GITHUB_ENV
+        
+        # Check for both .img and .img.xz files
+        IMG_FILE=$(ls -t *.img 2>/dev/null | head -1 || true)
+        XZ_FILE=$(ls -t *.img.xz 2>/dev/null | head -1 || true)
+        
+        if [ -f "$XZ_FILE" ]; then
+          echo "Image already compressed: $XZ_FILE"
+          echo "compressed_image=$XZ_FILE" >> $GITHUB_ENV
+          echo "image_path=/var/cache/manjaro-arm-tools/img/$XZ_FILE" >> $GITHUB_ENV
+        elif [ -f "$IMG_FILE" ]; then
+          echo "Compressing $IMG_FILE"
+          xz -z -T 0 "$IMG_FILE"
+          echo "compressed_image=${IMG_FILE}.xz" >> $GITHUB_ENV
+          echo "image_path=/var/cache/manjaro-arm-tools/img/${IMG_FILE}.xz" >> $GITHUB_ENV
         else
           echo "No image file found!"
+          echo "Directory contents:"
           ls -la
           exit 1
         fi
