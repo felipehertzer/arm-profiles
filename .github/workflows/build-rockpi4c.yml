@@ -2,388 +2,136 @@ name: Build and Release ARM Images
 
 on:
   push:
-    tags:
-      - 'v*'
+    tags: [ 'v*' ]
   workflow_dispatch:
     inputs:
       device:
-        description: 'Device to build for'
+        description: Device to build for, or the word all
         required: true
-        default: 'rockpi4c'
-        type: choice
-        options:
-          - rockpi4c
-          - rockpi4b
-          - rpi4
-          - pinebook-pro
+        default: rockpi4c
       edition:
-        description: 'Edition to build'
+        description: Edition to build (ignored when device is all)
         required: true
-        default: 'xfce'
-        type: choice
-        options:
-          - minimal
-          - xfce
-          - kde-plasma
-          - gnome
-          - i3
+        default: xfce
       version:
-        description: 'Version (leave empty for auto)'
+        description: Version label (leave blank for auto)
         required: false
-        type: string
-
-env:
-  DEVICE: ${{ github.event.inputs.device || 'rockpi4c' }}
-  EDITION: ${{ github.event.inputs.edition || 'xfce' }}
-  VERSION: ${{ github.event.inputs.version || '' }}
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    
+    strategy:
+      fail-fast: false
+      matrix:
+        include: |
+          ${{ toJson(fromJSON(
+            github.event_name == 'workflow_dispatch' && inputs.device == 'all' ?
+            '[{"device":"rockpi4c","edition":"minimal"},{"device":"rockpi4c","edition":"xfce"},{"device":"rockpi4b","edition":"minimal"},{"device":"rockpi4b","edition":"xfce"},{"device":"rpi4","edition":"minimal"},{"device":"rpi4","edition":"xfce"}]' :
+            format('[{{"device":"{0}","edition":"{1}"}}]', inputs.device, inputs.edition)
+          )) }}
+    env:
+      DEVICE: ${{ matrix.device }}
+      EDITION: ${{ matrix.edition }}
+      VERSION: ${{ inputs.version }}
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      
-    - name: Free up disk space
-      run: |
-        sudo rm -rf /usr/share/dotnet
-        sudo rm -rf /usr/local/lib/android
-        sudo rm -rf /opt/ghc
-        sudo rm -rf /opt/hostedtoolcache/CodeQL
-        sudo docker image prune --all --force
-        sudo apt-get autoremove -y
-        sudo apt-get autoclean
-        df -h
-        
-    - name: Setup environment
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          qemu-user-static \
-          binfmt-support \
-          parted \
-          dosfstools \
-          wget \
-          git \
-          debootstrap \
-          arch-install-scripts \
-          systemd-container \
-          haveged \
-          pwgen \
-          multipath-tools \
-          libarchive-tools \
-          bsdtar
-          
-    - name: Install Manjaro ARM Tools
-      run: |
-        # Clone the tools repository
-        git clone https://gitlab.manjaro.org/manjaro-arm/applications/manjaro-arm-tools.git
-        cd manjaro-arm-tools
-        
-        # Check the structure
-        echo "=== Repository structure ==="
-        ls -la
-        
-        # Install scripts
-        if [ -d "bin" ]; then
-          echo "Installing scripts to /usr/local/bin"
-          sudo chmod +x bin/*
-          sudo cp bin/* /usr/local/bin/
-        fi
-        
-        # Install library files to the expected location
-        if [ -d "lib" ]; then
-          echo "Installing library files to /usr/share/manjaro-arm-tools/lib"
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          sudo docker image prune --all --force
+          sudo apt-get autoremove -y
+          sudo apt-get autoclean
+
+      - name: Base packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pacman arch-install-scripts \
+            qemu-user-static binfmt-support \
+            parted dosfstools git wget bsdtar haveged pwgen
+
+      - name: Manjaro ARM Tools
+        run: |
           sudo mkdir -p /usr/share/manjaro-arm-tools/lib
-          sudo cp -r lib/* /usr/share/manjaro-arm-tools/lib/
-        fi
-        
-        # Install configuration files if they exist
-        if [ -d "conf" ]; then
-          echo "Installing configuration files"
-          sudo mkdir -p /usr/share/manjaro-arm-tools/conf
-          sudo cp -r conf/* /usr/share/manjaro-arm-tools/conf/
-        fi
-        
-        cd ..
-        
-    - name: Setup build environment
-      run: |
-        # Create necessary directories
-        sudo mkdir -p /var/cache/manjaro-arm-tools/{pkg,img}
-        sudo chown -R $USER:$USER /var/cache/manjaro-arm-tools
-        
-        # Clone ARM profiles repository (official Manjaro ARM profiles)
-        echo "=== Getting ARM profiles ==="
-        git clone https://gitlab.manjaro.org/manjaro-arm/applications/arm-profiles.git
-        
-        # Install profiles to expected location
-        sudo mkdir -p /usr/share/manjaro-arm-tools/profiles
-        if [ -d "arm-profiles" ]; then
-          sudo cp -r arm-profiles/* /usr/share/manjaro-arm-tools/profiles/ || true
-        fi
-        
-        # Also copy profiles from this repository if they exist
-        if [ -d "profiles" ]; then
-          echo "Copying custom profiles from repository"
-          sudo cp -r profiles/* /usr/share/manjaro-arm-tools/profiles/
-        fi
-        
-        # Create symlink for arm-profiles if the script expects it in root
-        sudo ln -sf /usr/share/manjaro-arm-tools/profiles /arm-profiles || true
-        
-        # Verify the setup
-        echo "=== Verifying setup ==="
-        ls -la /usr/share/manjaro-arm-tools/
-        ls -la /usr/share/manjaro-arm-tools/lib/ || echo "No lib directory"
-        ls -la /usr/share/manjaro-arm-tools/profiles/ || echo "No profiles directory"
-        ls -la /arm-profiles/ || echo "No /arm-profiles symlink"
-        
-        # Create basic configuration files to avoid warnings
-        sudo mkdir -p /etc/manjaro-arm-tools
-        cat << 'EOF' | sudo tee /etc/manjaro-arm-tools/manjaro-arm-tools.conf > /dev/null
-# Manjaro ARM Tools Configuration
-CARCH="aarch64"
-COMPRESSION="xz"
-IMGDIR="/var/cache/manjaro-arm-tools/img"
-BUILDDIR="/var/lib/manjaro-arm-tools"
-PKGDIR="/var/cache/manjaro-arm-tools/pkg"
+          git clone --depth 1 https://gitlab.manjaro.org/manjaro-arm/applications/manjaro-arm-tools.git
+          sudo install -m755 manjaro-arm-tools/bin/* /usr/local/bin/
+          sudo cp -r manjaro-arm-tools/lib/* /usr/share/manjaro-arm-tools/lib/
+
+      - name: Profiles
+        run: |
+          sudo mkdir -p /usr/share/manjaro-arm-tools/profiles
+          git clone --depth 1 https://gitlab.manjaro.org/manjaro-arm/applications/arm-profiles.git
+          sudo cp -r arm-profiles/* /usr/share/manjaro-arm-tools/profiles/
+          sudo ln -s /usr/share/manjaro-arm-tools/profiles /arm-profiles || true
+
+      - name: Minimal configs
+        run: |
+          sudo install -d /etc/manjaro-arm-tools
+          cat <<EOF | sudo tee /etc/manjaro-arm-tools/manjaro-arm-tools.conf
+CARCH=aarch64
+IMGDIR=/var/cache/manjaro-arm-tools/img
+BUILDDIR=/var/lib/manjaro-arm-tools
+PKGDIR=/var/cache/manjaro-arm-tools/pkg
+COMPRESSION=xz
 EOF
-        
-        # Create basic makepkg.conf to avoid warnings  
-        cat << 'EOF' | sudo tee /etc/makepkg.conf > /dev/null
-CARCH="aarch64"
-CHOST="aarch64-unknown-linux-gnu"
+          cat <<EOF | sudo tee /etc/makepkg.conf
+CARCH=aarch64
+CHOST=aarch64-unknown-linux-gnu
 MAKEFLAGS="-j$(nproc)"
 PKGEXT='.pkg.tar.xz'
 SRCEXT='.src.tar.gz'
 EOF
-        
-    - name: Set version
-      id: version
-      run: |
-        if [ -z "$VERSION" ]; then
-          if [ "${{ github.event_name }}" = "push" ] && [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            VERSION=${GITHUB_REF#refs/tags/v}
-          else
-            VERSION=$(date +%Y.%m)
+
+      - name: Build version
+        id: ver
+        run: |
+          if [ -z "$VERSION" ]; then
+              if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+                  VERSION=${{ github.ref_name }}; VERSION=${VERSION#v}
+              else
+                  VERSION=$(date +%Y.%m)
+              fi
           fi
-        fi
-        echo "version=$VERSION" >> $GITHUB_OUTPUT
-        echo "Building version: $VERSION"
-        
-    - name: Verify installation
-      run: |
-        echo "=== Verifying installation ==="
-        
-        # Check if buildarmimg exists and is executable
-        if command -v buildarmimg &> /dev/null; then
-          echo "✓ buildarmimg found in PATH"
-        else
-          echo "✗ buildarmimg not found"
-          exit 1
-        fi
-        
-        # Check required files
-        if [ -f "/usr/share/manjaro-arm-tools/lib/functions.sh" ]; then
-          echo "✓ functions.sh found"
-        else
-          echo "✗ functions.sh missing"
-          echo "Available files in lib:"
-          ls -la /usr/share/manjaro-arm-tools/lib/ || echo "No lib directory"
-          exit 1
-        fi
-        
-        # Check profiles
-        if [ -d "/arm-profiles/devices" ]; then
-          echo "✓ Device profiles found"
-          ls /arm-profiles/devices/ | head -5
-        else
-          echo "✗ Device profiles missing"
-          echo "Available in profiles:"
-          ls -la /usr/share/manjaro-arm-tools/profiles/ || echo "No profiles"
-          exit 1
-        fi
-        
-        # Check specific device
-        if [ -f "/arm-profiles/devices/$DEVICE" ]; then
-          echo "✓ Device $DEVICE profile found"
-        else
-          echo "✗ Device $DEVICE profile missing"
-          echo "Available devices:"
-          ls /arm-profiles/devices/ || echo "No devices directory"
-          exit 1
-        fi
+          echo "value=$VERSION" >>"$GITHUB_OUTPUT"
 
-    - name: Build ARM Image
-      run: |
-        echo "Building image for device: $DEVICE, edition: $EDITION, version: ${{ steps.version.outputs.version }}"
-        
-        # Build the image
-        if [ -n "${{ steps.version.outputs.version }}" ]; then
-          sudo buildarmimg -d $DEVICE -e $EDITION -v ${{ steps.version.outputs.version }}
-        else
-          sudo buildarmimg -d $DEVICE -e $EDITION
-        fi
-        
-    - name: Compress image
-      run: |
-        cd /var/cache/manjaro-arm-tools/img
-        
-        # Check for both .img and .img.xz files
-        IMG_FILE=$(ls -t *.img 2>/dev/null | head -1 || true)
-        XZ_FILE=$(ls -t *.img.xz 2>/dev/null | head -1 || true)
-        
-        if [ -f "$XZ_FILE" ]; then
-          echo "Image already compressed: $XZ_FILE"
-          echo "compressed_image=$XZ_FILE" >> $GITHUB_ENV
-          echo "image_path=/var/cache/manjaro-arm-tools/img/$XZ_FILE" >> $GITHUB_ENV
-        elif [ -f "$IMG_FILE" ]; then
-          echo "Compressing $IMG_FILE"
-          xz -z -T 0 "$IMG_FILE"
-          echo "compressed_image=${IMG_FILE}.xz" >> $GITHUB_ENV
-          echo "image_path=/var/cache/manjaro-arm-tools/img/${IMG_FILE}.xz" >> $GITHUB_ENV
-        else
-          echo "No image file found!"
-          echo "Directory contents:"
-          ls -la
-          exit 1
-        fi
-        
-    - name: Generate checksums
-      run: |
-        cd /var/cache/manjaro-arm-tools/img
-        sha256sum "$compressed_image" > "${compressed_image}.sha256"
-        md5sum "$compressed_image" > "${compressed_image}.md5"
-        
-    - name: Upload build artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: arm-image-${{ env.DEVICE }}-${{ env.EDITION }}-${{ steps.version.outputs.version }}
-        path: |
-          ${{ env.image_path }}
-          ${{ env.image_path }}.sha256
-          ${{ env.image_path }}.md5
-        retention-days: 30
-        
-    - name: Create Release
-      if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-      uses: softprops/action-gh-release@v1
-      with:
-        files: |
-          ${{ env.image_path }}
-          ${{ env.image_path }}.sha256
-          ${{ env.image_path }}.md5
-        tag_name: ${{ github.ref_name }}
-        name: Release ${{ github.ref_name }}
-        body: |
-          ## ARM Image Release ${{ github.ref_name }}
-          
-          **Device:** ${{ env.DEVICE }}  
-          **Edition:** ${{ env.EDITION }}  
-          **Version:** ${{ steps.version.outputs.version }}
-          
-          ### Files
-          - `${{ env.compressed_image }}` - Main image file
-          - `${{ env.compressed_image }}.sha256` - SHA256 checksum
-          - `${{ env.compressed_image }}.md5` - MD5 checksum
-          
-          ### Installation
-          1. Download the `.xz` file
-          2. Verify checksums
-          3. Extract: `xz -d filename.img.xz`
-          4. Flash to SD card/eMMC using tools like `dd`, Etcher, or similar
-          
-          Built on: ${{ github.run_number }} at ${{ github.event.head_commit.timestamp }}
-        draft: false
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build image
+        run: |
+          sudo buildarmimg -d "$DEVICE" -e "$EDITION" -v "${{ steps.ver.outputs.value }}"
 
-  matrix-build:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.device == 'all'
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        device: [rockpi4c, rockpi4b, rpi4]
-        edition: [minimal, xfce]
-        
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      
-    - name: Free up disk space
-      run: |
-        sudo rm -rf /usr/share/dotnet
-        sudo rm -rf /usr/local/lib/android
-        sudo rm -rf /opt/ghc
-        sudo docker image prune --all --force
-        df -h
-        
-    - name: Setup environment
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y qemu-user-static binfmt-support parted dosfstools wget git
-        
-    - name: Install Manjaro ARM Tools
-      run: |
-        # Clone the tools repository
-        git clone https://gitlab.manjaro.org/manjaro-arm/applications/manjaro-arm-tools.git
-        cd manjaro-arm-tools
-        
-        # Install dependencies
-        sudo apt-get install -y \
-          arch-install-scripts \
-          binfmt-support \
-          qemu-user-static \
-          systemd-container \
-          haveged \
-          pwgen \
-          multipath-tools \
-          archiso
-        
-        # Make scripts executable and copy to system
-        sudo chmod +x bin/*
-        sudo cp bin/* /usr/local/bin/
-        
-        # Copy lib files
-        sudo mkdir -p /usr/local/lib/manjaro-arm-tools
-        sudo cp -r lib/* /usr/local/lib/manjaro-arm-tools/
-        
-        # Create necessary directories
-        sudo mkdir -p /usr/share/manjaro-arm-tools
-        
-        cd ..
-        
-    - name: Setup build environment
-      run: |
-        sudo mkdir -p /var/cache/manjaro-arm-tools/{pkg,img}
-        sudo chown -R $USER:$USER /var/cache/manjaro-arm-tools
-        if [ -d "profiles" ]; then
-          sudo mkdir -p /usr/share/manjaro-arm-tools/profiles
-          sudo cp -r profiles/* /usr/share/manjaro-arm-tools/profiles/
-        fi
-        
-    - name: Build ARM Image
-      run: |
-        echo "Building ${{ matrix.device }} with ${{ matrix.edition }}"
-        sudo buildarmimg -d ${{ matrix.device }} -e ${{ matrix.edition }}
-        
-    - name: Compress and upload
-      run: |
-        cd /var/cache/manjaro-arm-tools/img
-        IMAGE_FILE=$(ls -t *.img | head -1)
-        if [ -f "$IMAGE_FILE" ]; then
-          xz -z -T 0 "$IMAGE_FILE"
-          sha256sum "${IMAGE_FILE}.xz" > "${IMAGE_FILE}.xz.sha256"
-        fi
-        
-    - name: Upload matrix artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: arm-image-${{ matrix.device }}-${{ matrix.edition }}
-        path: |
-          /var/cache/manjaro-arm-tools/img/*.xz
-          /var/cache/manjaro-arm-tools/img/*.sha256
+      - name: Compress
+        run: |
+          cd /var/cache/manjaro-arm-tools/img
+          IMG=$(ls -t *.img | head -1)
+          xz -z -T0 "$IMG"
+          echo "FILE=${IMG}.xz" >>"$GITHUB_ENV"
+
+      - name: Checksums
+        run: |
+          cd /var/cache/manjaro-arm-tools/img
+          sha256sum "$FILE" >"$FILE.sha256"
+          md5sum   "$FILE" >"$FILE.md5"
+
+      - name: Upload artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.DEVICE }}-${{ env.EDITION }}-${{ steps.ver.outputs.value }}
+          path: |
+            /var/cache/manjaro-arm-tools/img/${{ env.FILE }}
+            /var/cache/manjaro-arm-tools/img/${{ env.FILE }}.sha256
+            /var/cache/manjaro-arm-tools/img/${{ env.FILE }}.md5
+          retention-days: 30
+
+      - name: Release
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          files: |
+            /var/cache/manjaro-arm-tools/img/${{ env.FILE }}
+            /var/cache/manjaro-arm-tools/img/${{ env.FILE }}.sha256
+            /var/cache/manjaro-arm-tools/img/${{ env.FILE }}.md5
