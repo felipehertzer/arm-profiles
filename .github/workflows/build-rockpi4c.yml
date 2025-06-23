@@ -79,34 +79,30 @@ jobs:
         git clone https://gitlab.manjaro.org/manjaro-arm/applications/manjaro-arm-tools.git
         cd manjaro-arm-tools
         
-        # Check if we have the expected structure
+        # Check the structure
+        echo "=== Repository structure ==="
         ls -la
         
-        # Try different installation methods
-        if [ -f "Makefile" ]; then
-          echo "Found Makefile, trying make install"
-          sudo make install || echo "Make install failed, trying manual installation"
-        fi
-        
-        # Manual installation as fallback
+        # Install scripts
         if [ -d "bin" ]; then
-          echo "Installing scripts manually"
+          echo "Installing scripts to /usr/local/bin"
           sudo chmod +x bin/*
           sudo cp bin/* /usr/local/bin/
         fi
         
+        # Install library files to the expected location
         if [ -d "lib" ]; then
-          echo "Installing library files"
-          sudo mkdir -p /usr/local/lib/manjaro-arm-tools
-          sudo cp -r lib/* /usr/local/lib/manjaro-arm-tools/
+          echo "Installing library files to /usr/share/manjaro-arm-tools/lib"
+          sudo mkdir -p /usr/share/manjaro-arm-tools/lib
+          sudo cp -r lib/* /usr/share/manjaro-arm-tools/lib/
         fi
         
-        # Create necessary directories
-        sudo mkdir -p /usr/share/manjaro-arm-tools
-        
-        # Verify installation
-        which buildarmimg || echo "buildarmimg not found in PATH"
-        ls -la /usr/local/bin/build* || echo "No build scripts found"
+        # Install configuration files if they exist
+        if [ -d "conf" ]; then
+          echo "Installing configuration files"
+          sudo mkdir -p /usr/share/manjaro-arm-tools/conf
+          sudo cp -r conf/* /usr/share/manjaro-arm-tools/conf/
+        fi
         
         cd ..
         
@@ -116,16 +112,37 @@ jobs:
         sudo mkdir -p /var/cache/manjaro-arm-tools/{pkg,img}
         sudo chown -R $USER:$USER /var/cache/manjaro-arm-tools
         
-        # Setup configuration
-        sudo mkdir -p /usr/share/manjaro-arm-tools
+        # Clone ARM profiles repository (official Manjaro ARM profiles)
+        echo "=== Getting ARM profiles ==="
+        git clone https://gitlab.manjaro.org/manjaro-arm/applications/arm-profiles.git
         
-        # Ensure profiles are available
-        if [ ! -d "/usr/share/manjaro-arm-tools/profiles" ]; then
-          sudo mkdir -p /usr/share/manjaro-arm-tools/profiles
-          # Copy profiles from this repository if they exist
-          if [ -d "profiles" ]; then
-            sudo cp -r profiles/* /usr/share/manjaro-arm-tools/profiles/
-          fi
+        # Install profiles to expected location
+        sudo mkdir -p /usr/share/manjaro-arm-tools/profiles
+        if [ -d "arm-profiles" ]; then
+          sudo cp -r arm-profiles/* /usr/share/manjaro-arm-tools/profiles/ || true
+        fi
+        
+        # Also copy profiles from this repository if they exist
+        if [ -d "profiles" ]; then
+          echo "Copying custom profiles from repository"
+          sudo cp -r profiles/* /usr/share/manjaro-arm-tools/profiles/
+        fi
+        
+        # Create symlink for arm-profiles if the script expects it in root
+        sudo ln -sf /usr/share/manjaro-arm-tools/profiles /arm-profiles || true
+        
+        # Verify the setup
+        echo "=== Verifying setup ==="
+        ls -la /usr/share/manjaro-arm-tools/
+        ls -la /usr/share/manjaro-arm-tools/lib/ || echo "No lib directory"
+        ls -la /usr/share/manjaro-arm-tools/profiles/ || echo "No profiles directory"
+        ls -la /arm-profiles/ || echo "No /arm-profiles symlink"
+        
+        # Check if required files exist
+        if [ -f "/usr/share/manjaro-arm-tools/lib/functions.sh" ]; then
+          echo "✓ functions.sh found"
+        else
+          echo "✗ functions.sh missing"
         fi
         
     - name: Set version
@@ -141,36 +158,58 @@ jobs:
         echo "version=$VERSION" >> $GITHUB_OUTPUT
         echo "Building version: $VERSION"
         
+    - name: Verify installation
+      run: |
+        echo "=== Verifying installation ==="
+        
+        # Check if buildarmimg exists and is executable
+        if command -v buildarmimg &> /dev/null; then
+          echo "✓ buildarmimg found in PATH"
+        else
+          echo "✗ buildarmimg not found"
+          exit 1
+        fi
+        
+        # Check required files
+        if [ -f "/usr/share/manjaro-arm-tools/lib/functions.sh" ]; then
+          echo "✓ functions.sh found"
+        else
+          echo "✗ functions.sh missing"
+          echo "Available files in lib:"
+          ls -la /usr/share/manjaro-arm-tools/lib/ || echo "No lib directory"
+          exit 1
+        fi
+        
+        # Check profiles
+        if [ -d "/arm-profiles/devices" ]; then
+          echo "✓ Device profiles found"
+          ls /arm-profiles/devices/ | head -5
+        else
+          echo "✗ Device profiles missing"
+          echo "Available in profiles:"
+          ls -la /usr/share/manjaro-arm-tools/profiles/ || echo "No profiles"
+          exit 1
+        fi
+        
+        # Check specific device
+        if [ -f "/arm-profiles/devices/$DEVICE" ]; then
+          echo "✓ Device $DEVICE profile found"
+        else
+          echo "✗ Device $DEVICE profile missing"
+          echo "Available devices:"
+          ls /arm-profiles/devices/ || echo "No devices directory"
+          exit 1
+        fi
+
     - name: Build ARM Image
       run: |
         echo "Building image for device: $DEVICE, edition: $EDITION, version: ${{ steps.version.outputs.version }}"
         
-        # First try direct build
-        if command -v buildarmimg &> /dev/null; then
-          echo "Using buildarmimg directly"
-          if [ -n "${{ steps.version.outputs.version }}" ]; then
-            sudo buildarmimg -d $DEVICE -e $EDITION -v ${{ steps.version.outputs.version }}
-          else
-            sudo buildarmimg -d $DEVICE -e $EDITION
-          fi
+        # Build the image
+        if [ -n "${{ steps.version.outputs.version }}" ]; then
+          sudo buildarmimg -d $DEVICE -e $EDITION -v ${{ steps.version.outputs.version }}
         else
-          echo "buildarmimg not found, trying alternative approaches"
-          
-          # Alternative: Use Docker approach
-          echo "Trying Docker-based build"
-          docker run --rm --privileged \
-            -v $(pwd):/workspace \
-            -v /var/cache/manjaro-arm-tools:/var/cache/manjaro-arm-tools \
-            manjarolinux/base:latest \
-            bash -c "
-              pacman -Syu --noconfirm
-              pacman -S --noconfirm manjaro-arm-tools
-              buildarmimg -d $DEVICE -e $EDITION
-            " || {
-              echo "Docker build failed, trying manual build process"
-              # Add manual build process here if needed
-              exit 1
-            }
+          sudo buildarmimg -d $DEVICE -e $EDITION
         fi
         
     - name: Compress image
