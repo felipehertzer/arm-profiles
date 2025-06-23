@@ -408,3 +408,4 @@ EOF
         path: |
           /var/cache/manjaro-arm-tools/img/*.xz
           /var/cache/manjaro-arm-tools/img/*.sha256
+        
