@@ -34,7 +34,6 @@ jobs:
               :
               format('[{{"device":"{0}","edition":"{1}"}}]', inputs.device, inputs.edition)
           )) }}
-
     env:
       DEVICE: ${{ matrix.device }}
       EDITION: ${{ matrix.edition }}
@@ -76,24 +75,23 @@ jobs:
       - name: Write minimal configuration files
         run: |
           sudo install -d /etc/manjaro-arm-tools
-
           # manjaro-arm-tools.conf
-          sudo tee /etc/manjaro-arm-tools/manjaro-arm-tools.conf <<'CONF'
-CARCH=aarch64
-IMGDIR=/var/cache/manjaro-arm-tools/img
-BUILDDIR=/var/lib/manjaro-arm-tools
-PKGDIR=/var/cache/manjaro-arm-tools/pkg
-COMPRESSION=xz
-CONF
+          sudo tee /etc/manjaro-arm-tools/manjaro-arm-tools.conf <<EOF
+          CARCH=aarch64
+          IMGDIR=/var/cache/manjaro-arm-tools/img
+          BUILDDIR=/var/lib/manjaro-arm-tools
+          PKGDIR=/var/cache/manjaro-arm-tools/pkg
+          COMPRESSION=xz
+          EOF
 
           # makepkg.conf
-          sudo tee /etc/makepkg.conf <<'MAKE'
-CARCH=aarch64
-CHOST=aarch64-unknown-linux-gnu
-MAKEFLAGS="-j$(nproc)"
-PKGEXT='.pkg.tar.xz'
-SRCEXT='.src.tar.gz'
-MAKE
+          sudo tee /etc/makepkg.conf <<EOF
+          CARCH=aarch64
+          CHOST=aarch64-unknown-linux-gnu
+          MAKEFLAGS="-j\$(nproc)"
+          PKGEXT='.pkg.tar.xz'
+          SRCEXT='.src.tar.gz'
+          EOF
 
       - name: Determine version string
         id: ver
